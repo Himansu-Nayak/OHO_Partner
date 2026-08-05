@@ -1,0 +1,109 @@
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap');
+@import url('https://unpkg.com/leaflet@1.9.4/dist/leaflet.css');
+@import 'tailwindcss';
+@theme inline {
+  --color-oho-navy: #1A3564;
+  --color-oho-blue: #2563EB;
+  --color-oho-light: #EEF3FB;
+  --color-oho-green: #16A34A;
+  --color-oho-orange: #EA580C;
+  --color-oho-red: #DC2626;
+}
+
+* {
+  font-family: 'Poppins', sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  background: linear-gradient(160deg, #dce8f7 0%, #e8f0fa 50%, #d6e4f5 100%);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 100vh;
+  margin: 0;
+}
+
+/* Outer phone shell */
+#root {
+  position: relative;
+  width: 375px;
+  height: 812px;
+  /* thick device border mimicking the reference screenshot */
+  border: 10px solid #1a2744;
+  border-radius: 52px;
+  box-shadow:
+    0 0 0 1.5px #2d3f6e,
+    inset 0 0 0 1.5px #0d1a38,
+    0 30px 80px rgba(20,40,100,0.38),
+    0 8px 24px rgba(20,40,100,0.22);
+  background: #fff;
+  overflow: visible;
+  transform: scale(0.85);
+}
+
+/* Side buttons */
+#root::before {
+  content: '';
+  position: absolute;
+  left: -14px;
+  top: 90px;
+  width: 4px;
+  height: 34px;
+  background: #1a2744;
+  border-radius: 2px 0 0 2px;
+  box-shadow: 0 44px 0 #1a2744, 0 88px 0 #1a2744;
+}
+#root::after {
+  content: '';
+  position: absolute;
+  right: -14px;
+  top: 130px;
+  width: 4px;
+  height: 64px;
+  background: #1a2744;
+  border-radius: 0 2px 2px 0;
+}
+
+/* Inner screen clipping wrapper */
+.phone-screen {
+  width: 100%;
+  height: 100%;
+  border-radius: 42px;
+  overflow: hidden;
+  position: relative;
+  background: #EEF3FB;
+}
+
+/* Dynamic Island */
+.dynamic-island {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 120px;
+  height: 34px;
+  background: #0d1a38;
+  border-radius: 20px;
+  z-index: 100;
+  pointer-events: none;
+}
+
+/* Home indicator bar at bottom */
+.phone-screen::after {
+  content: '';
+  position: absolute;
+  bottom: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 120px;
+  height: 5px;
+  background: #1a2744;
+  border-radius: 3px;
+  opacity: 0.25;
+  z-index: 200;
+  pointer-events: none;
+}
+
+.hide-scrollbar::-webkit-scrollbar { display: none; }
+.hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }

@@ -1,0 +1,10 @@
+{
+  "description": "Streamline delivery partner management with a user-friendly app that tracks orders, earnings, and customer feedback, enhancing efficiency for Kampa Infra's OHO ecosystem.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}
