@@ -440,6 +440,7 @@ function IncomingOrderScreen({ onNav }: { onNav: (s: Screen) => void }) {
   const [timeLeft, setTimeLeft] = useState(30);
 
   useEffect(() => {
+    speak("New order request. Pickup at Burger King, Unit 4, Bhubaneswar. Payout 92 rupees 50 paise.");
     const t = setInterval(() => setTimeLeft((p) => (p > 0 ? p - 1 : 0)), 1000);
     return () => clearInterval(t);
   }, []);

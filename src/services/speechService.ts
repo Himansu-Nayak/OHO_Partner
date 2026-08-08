@@ -28,7 +28,7 @@ export const speak = (text: string, lang?: string) => {
 };
 
 export const listenForCommand = (
-  commands: Record<string, () => void>,
+  commands: Record<string, (matchText?: string) => void>,
   onStart?: () => void,
   onEnd?: () => void
 ) => {
@@ -55,9 +55,15 @@ export const listenForCommand = (
     
     for (const [cmd, action] of Object.entries(commands)) {
       if (transcript.includes(cmd.toLowerCase())) {
-        action();
+        action(transcript);
         return;
       }
+    }
+
+    // Check for PIN matching (e.g. "pin 1 2 3 4" or "verify 1234")
+    const pinMatch = transcript.match(/\b(\d\s*){4}\b/);
+    if (pinMatch && commands["pin"]) {
+      commands["pin"](pinMatch[0].replace(/\s+/g, ''));
     }
   };
 
