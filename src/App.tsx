@@ -1,6 +1,9 @@
 import { useState, useEffect, useRef } from "react";
 import { MapContainer, TileLayer, Marker, Polyline } from "react-leaflet";
 import L from "leaflet";
+import { initSocket, emitDriverOnline, emitDriverLocation } from "./services/socketService";
+import { queueAction, syncOfflineActions } from "./services/offlineSync";
+import { speak, listenForCommand, setVernacularLanguage, getVernacularLanguage } from "./services/speechService";
 
 // Fix leaflet default icon issue
 delete (L.Icon.Default.prototype as any)._getIconUrl;
@@ -268,6 +271,8 @@ function OTPScreen({ onNext }: { onNext: () => void }) {
 
 function HomeScreen({ onNav }: { onNav: (s: Screen) => void }) {
   const [isOnline, setIsOnline] = useState(true);
+  const [destMode, setDestMode] = useState(false);
+  const [destAddress, setDestAddress] = useState("Home: Cuttack Road");
 
   return (
     <div className="w-full h-full flex flex-col" style={{ background: "#EEF3FB" }}>
@@ -285,22 +290,50 @@ function HomeScreen({ onNav }: { onNav: (s: Screen) => void }) {
           </div>
         </div>
 
-        {/* Online Toggle */}
-        <div className="bg-white/10 rounded-2xl p-4 flex items-center justify-between">
-          <div>
-            <p className={`font-700 text-base ${isOnline ? "text-green-400" : "text-white/50"}`}>
-              {isOnline ? "● Online" : "○ Offline"}
-            </p>
-            <p className="text-white/60 text-xs mt-0.5">
-              {isOnline ? "You're available for orders" : "You're not receiving orders"}
-            </p>
+        {/* Online Toggle & Destination Mode */}
+        <div className="bg-white/10 rounded-2xl p-4 flex flex-col gap-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className={`font-700 text-base ${isOnline ? "text-green-400" : "text-white/50"}`}>
+                {isOnline ? "● Online" : "○ Offline"}
+              </p>
+              <p className="text-white/60 text-xs mt-0.5">
+                {isOnline ? "You're available for orders" : "You're not receiving orders"}
+              </p>
+            </div>
+            <button
+              onClick={() => {
+                const nextState = !isOnline;
+                setIsOnline(nextState);
+                emitDriverOnline(nextState);
+              }}
+              className={`w-14 h-7 rounded-full transition-colors relative ${isOnline ? "bg-green-500" : "bg-white/20"}`}
+            >
+              <div className={`w-5 h-5 bg-white rounded-full absolute top-1 transition-all ${isOnline ? "right-1" : "left-1"}`} />
+            </button>
           </div>
-          <button
-            onClick={() => setIsOnline(!isOnline)}
-            className={`w-14 h-7 rounded-full transition-colors relative ${isOnline ? "bg-green-500" : "bg-white/20"}`}
-          >
-            <div className={`w-5 h-5 bg-white rounded-full absolute top-1 transition-all ${isOnline ? "right-1" : "left-1"}`} />
-          </button>
+          
+          <div className="flex items-center justify-between pt-3 border-t border-white/10">
+            <div>
+              <p className={`font-700 text-sm ${destMode ? "text-blue-300" : "text-white/70"}`}>
+                🏠 Destination Mode (Go-Home Route)
+              </p>
+              {destMode && (
+                <input 
+                  type="text" 
+                  value={destAddress}
+                  onChange={(e) => setDestAddress(e.target.value)}
+                  className="bg-transparent text-white/90 text-xs border-b border-white/30 focus:outline-none focus:border-blue-400 mt-1 w-full"
+                />
+              )}
+            </div>
+            <button
+              onClick={() => setDestMode(!destMode)}
+              className={`w-10 h-5 rounded-full transition-colors relative ${destMode ? "bg-blue-500" : "bg-white/20"}`}
+            >
+              <div className={`w-3.5 h-3.5 bg-white rounded-full absolute top-0.5 transition-all ${destMode ? "right-1" : "left-1"}`} />
+            </button>
+          </div>
         </div>
       </div>
 
@@ -383,12 +416,17 @@ function HomeScreen({ onNav }: { onNav: (s: Screen) => void }) {
           ))}
         </div>
 
-        {/* Incentive Banner */}
-        <div className="rounded-2xl p-4 flex items-center gap-3" style={{ background: "#FFF7ED" }}>
-          <div className="w-10 h-10 rounded-xl bg-orange-100 flex items-center justify-center text-xl">🏆</div>
-          <div className="flex-1">
-            <p className="text-orange-700 font-700 text-sm">2 orders left for bonus!</p>
-            <p className="text-orange-500 text-xs mt-0.5">Complete 14 orders today → earn ₹200 bonus</p>
+        {/* Gamified Incentive Target Bar */}
+        <div className="rounded-2xl p-4 flex flex-col gap-3" style={{ background: "#FFF7ED" }}>
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-orange-100 flex items-center justify-center text-xl">🏆</div>
+            <div className="flex-1">
+              <p className="text-orange-700 font-700 text-sm">2 trips left for ₹200 bonus!</p>
+              <p className="text-orange-500 text-xs mt-0.5">12 / 14 trips completed today</p>
+            </div>
+          </div>
+          <div className="w-full bg-orange-200 rounded-full h-2">
+            <div className="bg-orange-500 h-2 rounded-full" style={{ width: '85%' }}></div>
           </div>
         </div>
       </div>
@@ -503,11 +541,24 @@ function IncomingOrderScreen({ onNav }: { onNav: (s: Screen) => void }) {
 }
 
 function ActiveDeliveryScreen({ onNav }: { onNav: (s: Screen) => void }) {
-  const steps = ["Order Picked Up", "On the Way", "Delivered"];
-  const [currentStep, setCurrentStep] = useState(1);
+  const steps = ["Arrived at Pickup", "On the Way", "Delivered"];
+  const [currentStep, setCurrentStep] = useState(0);
   const [swipeX, setSwipeX] = useState(0);
   const swipeRef = useRef<HTMLDivElement>(null);
   const isDragging = useRef(false);
+  
+  const [pin, setPin] = useState("");
+  const [isPinVerified, setIsPinVerified] = useState(false);
+
+  const handleVerifyPin = () => {
+    if (pin === "1234") {
+      setIsPinVerified(true);
+      setCurrentStep(1);
+      queueAction('start_trip', { pin });
+    } else {
+      alert("Invalid PIN. For demo, use 1234");
+    }
+  };
 
   const handlePointerDown = () => { isDragging.current = true; };
   const handlePointerMove = (e: React.PointerEvent) => {
@@ -604,10 +655,18 @@ function ActiveDeliveryScreen({ onNav }: { onNav: (s: Screen) => void }) {
               </div>
             ))}
           </div>
-          {currentStep < steps.length - 1 && (
+          {currentStep === 0 && !isPinVerified ? (
+            <div className="mt-4 p-3 bg-blue-50 rounded-xl border border-blue-100 flex flex-col gap-3">
+              <p className="text-sm font-600 text-blue-800 text-center">Enter Customer 4-Digit PIN</p>
+              <div className="flex gap-2">
+                <input type="text" maxLength={4} value={pin} onChange={e => setPin(e.target.value.replace(/\D/, ''))} placeholder="1234" className="flex-1 px-3 py-2 text-center font-700 tracking-[0.5em] text-lg rounded-lg border border-blue-200 outline-none focus:border-blue-500 bg-white" />
+                <button onClick={handleVerifyPin} className="px-5 py-2 bg-blue-600 active:bg-blue-700 text-white font-700 rounded-lg">Start Trip</button>
+              </div>
+            </div>
+          ) : currentStep < steps.length - 1 && (
             <button
               onClick={() => setCurrentStep((p) => p + 1)}
-              className="w-full mt-2 py-3 rounded-xl text-white font-700 text-sm"
+              className="w-full mt-4 py-3 rounded-xl text-white font-700 text-sm"
               style={{ background: "#2563EB" }}
             >
               Mark Next Step →
@@ -708,17 +767,64 @@ const maxBar = Math.max(...barData.map((b) => b.val));
 
 function EarningsDashboard({ onNav }: { onNav: (s: Screen) => void }) {
   const [tab, setTab] = useState<"daily" | "monthly">("daily");
+  const [cashoutStatus, setCashoutStatus] = useState<"idle" | "loading" | "success">("idle");
+
+  const handleCashout = () => {
+    setCashoutStatus("loading");
+    setTimeout(() => setCashoutStatus("success"), 2000);
+  };
+
   return (
     <div className="w-full h-full flex flex-col" style={{ background: "#EEF3FB" }}>
       <div className="px-5 pt-16 pb-5" style={{ background: "#1A3564" }}>
-        <h2 className="text-white font-700 text-xl">Earnings</h2>
-        <p className="text-3xl font-800 text-white mt-2">₹18,430</p>
-        <p className="text-white/60 text-sm">August 2026 • 203 deliveries</p>
+        <h2 className="text-white font-700 text-xl">Earnings & Wallet</h2>
+        <div className="flex justify-between items-end mt-2">
+          <div>
+            <p className="text-3xl font-800 text-white">₹18,430</p>
+            <p className="text-white/60 text-sm">Available Balance</p>
+          </div>
+          <div className="text-right">
+            <p className="text-xl font-700 text-green-400">₹24,500</p>
+            <p className="text-white/60 text-xs">Total Net (Aug)</p>
+          </div>
+        </div>
       </div>
 
       <div className="flex-1 overflow-y-auto hide-scrollbar px-5 py-4 pb-24 space-y-4">
+        
+        {/* Wallet Details */}
+        <div className="bg-white rounded-2xl p-4 shadow-sm space-y-3">
+          <p className="text-sm font-700 text-slate-700">Wallet Summary (Today)</p>
+          {[
+            { label: "Net Earnings", val: "₹1,240", color: "bg-blue-500" },
+            { label: "Cash Collected (COD)", val: "-₹350", color: "bg-red-500" },
+            { label: "Platform Fees", val: "-₹110", color: "bg-orange-500" },
+          ].map((b) => (
+            <div key={b.label} className="flex items-center gap-3">
+              <div className={`w-3 h-3 rounded-full ${b.color}`} />
+              <span className="flex-1 text-sm text-slate-600">{b.label}</span>
+              <span className="text-sm font-700 text-slate-800">{b.val}</span>
+            </div>
+          ))}
+          <div className="pt-3 border-t border-slate-100 flex justify-between items-center">
+            <span className="font-700 text-slate-800">Added to Wallet</span>
+            <span className="font-800 text-green-600">₹780</span>
+          </div>
+        </div>
+
+        {/* Withdraw Button */}
+        <button 
+          onClick={cashoutStatus === "idle" ? handleCashout : undefined}
+          className="w-full py-4 rounded-2xl font-700 text-base shadow-lg transition-all relative overflow-hidden text-white" 
+          style={{ background: cashoutStatus === "success" ? "#16A34A" : "#2563EB" }}
+        >
+          {cashoutStatus === "idle" && "Instant Transfer to UPI →"}
+          {cashoutStatus === "loading" && "Processing via Razorpay..."}
+          {cashoutStatus === "success" && "✓ Transfer Successful"}
+        </button>
+
         {/* Tab */}
-        <div className="bg-white rounded-xl p-1 flex shadow-sm">
+        <div className="bg-white rounded-xl p-1 flex shadow-sm mt-2">
           {(["daily", "monthly"] as const).map((t) => (
             <button
               key={t}
@@ -733,7 +839,7 @@ function EarningsDashboard({ onNav }: { onNav: (s: Screen) => void }) {
 
         {/* Bar Chart */}
         <div className="bg-white rounded-2xl p-5 shadow-sm">
-          <p className="text-sm font-700 text-slate-700 mb-4">Earnings per Day</p>
+          <p className="text-sm font-700 text-slate-700 mb-4">Earnings History</p>
           <div className="flex items-end gap-2 h-36">
             {barData.map((b, i) => (
               <div key={i} className="flex-1 flex flex-col items-center gap-1">
@@ -745,39 +851,6 @@ function EarningsDashboard({ onNav }: { onNav: (s: Screen) => void }) {
           </div>
         </div>
 
-        {/* Breakdown */}
-        <div className="bg-white rounded-2xl p-4 shadow-sm space-y-3">
-          <p className="text-sm font-700 text-slate-700">Breakdown</p>
-          {[
-            { label: "Base Earnings", val: "₹15,200", color: "bg-blue-500" },
-            { label: "Incentive Bonus", val: "₹2,100", color: "bg-green-500" },
-            { label: "Peak Hour Bonus", val: "₹830", color: "bg-orange-500" },
-            { label: "Tips Received", val: "₹300", color: "bg-purple-500" },
-          ].map((b) => (
-            <div key={b.label} className="flex items-center gap-3">
-              <div className={`w-3 h-3 rounded-full ${b.color}`} />
-              <span className="flex-1 text-sm text-slate-600">{b.label}</span>
-              <span className="text-sm font-700 text-slate-800">{b.val}</span>
-            </div>
-          ))}
-        </div>
-
-        {/* Milestone */}
-        <div className="rounded-2xl p-4" style={{ background: "#1A3564" }}>
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-white font-600 text-sm">Monthly Target</span>
-            <span className="text-green-400 font-700 text-sm">92%</span>
-          </div>
-          <div className="bg-white/20 rounded-full h-2.5">
-            <div className="bg-green-400 h-2.5 rounded-full" style={{ width: "92%" }} />
-          </div>
-          <p className="text-white/60 text-xs mt-2">₹1,570 more to hit ₹20,000 bonus tier</p>
-        </div>
-
-        {/* Withdraw */}
-        <button className="w-full py-4 rounded-2xl font-700 text-base" style={{ background: "#2563EB", color: "white" }}>
-          Withdraw ₹18,430 →
-        </button>
       </div>
 
       <BottomNav active="earnings" onNav={onNav} />
@@ -923,20 +996,37 @@ function ProfileScreen({ onNav }: { onNav: (s: Screen) => void }) {
           </div>
         </div>
 
-        {/* Settings */}
-        <div className="bg-white rounded-2xl overflow-hidden shadow-sm divide-y divide-slate-100">
-          {[
-            { icon: "🔔", label: "Notifications" },
-            { icon: "🌐", label: "Language" },
-            { icon: "🛡️", label: "Privacy Policy" },
-            { icon: "❓", label: "Help & Support" },
-          ].map((s) => (
-            <button key={s.label} className="w-full flex items-center gap-3 px-4 py-4 text-left active:bg-slate-50">
-              <span className="text-lg">{s.icon}</span>
-              <span className="flex-1 text-sm font-500 text-slate-700">{s.label}</span>
-              <span className="text-slate-300 text-sm">›</span>
-            </button>
-          ))}
+        {/* Settings & Preferences */}
+        <div className="bg-white rounded-2xl p-4 shadow-sm space-y-4">
+          <p className="text-sm font-700 text-slate-700">App & Audio Preferences</p>
+          
+          {/* Vernacular Language Selector */}
+          <div>
+            <label className="text-xs text-slate-400 font-500 block mb-1.5">Regional Audio Language</label>
+            <div className="grid grid-cols-3 gap-2">
+              {[
+                { code: "en-IN", label: "English" },
+                { code: "hi-IN", label: "हिंदी (Hindi)" },
+                { code: "or-IN", label: "ଓଡ଼ିଆ (Odia)" },
+              ].map((l) => (
+                <button
+                  key={l.code}
+                  onClick={() => setVernacularLanguage(l.code)}
+                  className={`py-2 px-1 rounded-xl text-xs font-700 border transition-all ${getVernacularLanguage() === l.code ? "border-blue-600 bg-blue-50 text-blue-700" : "border-slate-200 text-slate-600"}`}
+                >
+                  {l.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
+            <div>
+              <p className="text-sm font-600 text-slate-800">🎤 Voice Assistant (Hands-Free)</p>
+              <p className="text-xs text-slate-400">Control rides using voice commands</p>
+            </div>
+            <span className="text-xs font-700 text-green-600 bg-green-50 px-2.5 py-1 rounded-full">Active</span>
+          </div>
         </div>
 
         {/* Logout */}
@@ -963,17 +1053,39 @@ function ProfileScreen({ onNav }: { onNav: (s: Screen) => void }) {
 }
 
 function MapNavigationScreen({ onNav }: { onNav: (s: Screen) => void }) {
+  const [showEV, setShowEV] = useState(false);
+  const [showRest, setShowRest] = useState(false);
+  
   const pickup: [number, number] = [20.3533, 85.8272];
   const drop: [number, number] = [20.3010, 85.8245];
+  
+  const evStation: [number, number] = [20.3300, 85.8200];
+  const restStop: [number, number] = [20.3400, 85.8300];
+
+  const [routingToEV, setRoutingToEV] = useState(false);
+
+  const activeDrop = routingToEV ? evStation : drop;
 
   return (
     <div className="w-full h-full flex flex-col relative" style={{ background: "#EEF3FB" }}>
-      <div className="absolute top-0 left-0 w-full px-5 pt-16 pb-12 z-[400] flex justify-between items-start bg-gradient-to-b from-slate-900/60 to-transparent pointer-events-none">
-        <button onClick={() => onNav("active")} className="w-10 h-10 bg-white/20 backdrop-blur-md rounded-full flex items-center justify-center pointer-events-auto shadow-sm">
-          <BackIcon />
-        </button>
-        <div className="bg-white shadow-lg px-4 py-2 rounded-full pointer-events-auto">
-          <span className="font-700 text-blue-700 text-sm">22 min • 5.8 km</span>
+      <div className="absolute top-0 left-0 w-full px-5 pt-16 pb-12 z-[400] flex flex-col gap-3 bg-gradient-to-b from-slate-900/60 to-transparent pointer-events-none">
+        <div className="flex justify-between items-start pointer-events-auto">
+          <button onClick={() => onNav("active")} className="w-10 h-10 bg-white/20 backdrop-blur-md rounded-full flex items-center justify-center shadow-sm">
+            <BackIcon />
+          </button>
+          <div className="bg-white shadow-lg px-4 py-2 rounded-full">
+            <span className="font-700 text-blue-700 text-sm">
+              {routingToEV ? "Routing to EV Swap..." : "22 min • 5.8 km"}
+            </span>
+          </div>
+        </div>
+        <div className="flex gap-2 pointer-events-auto overflow-x-auto hide-scrollbar py-1">
+          <button onClick={() => setShowEV(!showEV)} className={`px-3 py-1.5 rounded-full text-xs font-600 shadow-sm whitespace-nowrap transition-colors ${showEV ? 'bg-blue-600 text-white' : 'bg-white text-slate-700'}`}>
+            ⚡ EV Swap
+          </button>
+          <button onClick={() => setShowRest(!showRest)} className={`px-3 py-1.5 rounded-full text-xs font-600 shadow-sm whitespace-nowrap transition-colors ${showRest ? 'bg-blue-600 text-white' : 'bg-white text-slate-700'}`}>
+            ☕ Rest Stops
+          </button>
         </div>
       </div>
 
@@ -981,24 +1093,37 @@ function MapNavigationScreen({ onNav }: { onNav: (s: Screen) => void }) {
         <MapContainer center={[20.327, 85.825]} zoom={13} style={{ height: "100%", width: "100%", zIndex: 0 }} zoomControl={false}>
           <TileLayer url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png" />
           <Marker position={pickup}></Marker>
-          <Marker position={drop}></Marker>
-          <Polyline positions={[pickup, drop]} color="#2563EB" weight={5} opacity={0.8} />
+          <Marker position={activeDrop}></Marker>
+          
+          {showEV && <Marker position={evStation}></Marker>}
+          {showRest && <Marker position={restStop}></Marker>}
+          
+          <Polyline positions={[pickup, activeDrop]} color="#2563EB" weight={5} opacity={0.8} />
         </MapContainer>
       </div>
       
       <div className="absolute bottom-0 left-0 w-full bg-white rounded-t-3xl shadow-[0_-10px_40px_rgba(0,0,0,0.1)] z-[400] px-5 py-6">
         <div className="flex items-center justify-between mb-4">
           <div>
-            <h3 className="font-800 text-slate-800 text-lg">Plot 45, Saheed Nagar</h3>
-            <p className="text-slate-500 text-sm">Drop-off location</p>
+            <h3 className="font-800 text-slate-800 text-lg">
+              {routingToEV ? "EV Station (Nayapalli)" : "Plot 45, Saheed Nagar"}
+            </h3>
+            <p className="text-slate-500 text-sm">{routingToEV ? "Battery Swap Station" : "Drop-off location"}</p>
           </div>
           <button className="w-10 h-10 bg-green-100 rounded-full flex items-center justify-center text-green-600">
             <PhoneIcon />
           </button>
         </div>
-        <button onClick={() => onNav("active")} className="w-full py-4 rounded-xl font-700 text-base text-white shadow-lg shadow-blue-200 active:scale-95 transition-transform" style={{ background: "#2563EB" }}>
-          Exit Navigation
-        </button>
+        <div className="flex gap-3">
+          {showEV && !routingToEV && (
+            <button onClick={() => setRoutingToEV(true)} className="flex-1 py-4 rounded-xl font-700 text-sm text-blue-700 bg-blue-50 border border-blue-200 active:bg-blue-100 transition-colors">
+              Route to EV
+            </button>
+          )}
+          <button onClick={() => { setRoutingToEV(false); onNav("active"); }} className={`${showEV && !routingToEV ? 'flex-1' : 'w-full'} py-4 rounded-xl font-700 text-base text-white shadow-lg shadow-blue-200 active:scale-95 transition-transform`} style={{ background: "#2563EB" }}>
+            Exit Nav
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -1007,6 +1132,33 @@ function MapNavigationScreen({ onNav }: { onNav: (s: Screen) => void }) {
 // ─── App ──────────────────────────────────────────────────────────────────────
 export default function App() {
   const [screen, setScreen] = useState<Screen>("splash");
+  const [isListening, setIsListening] = useState(false);
+
+  useEffect(() => {
+    initSocket();
+    emitDriverOnline(true);
+    syncOfflineActions();
+
+    const interval = setInterval(() => {
+      emitDriverLocation(20.327, 85.825);
+    }, 10000);
+
+    return () => clearInterval(interval);
+  }, []);
+
+  const handleVoiceCommand = () => {
+    listenForCommand(
+      {
+        "accept": () => { speak("Accepting ride"); setScreen("active"); },
+        "navigate": () => { speak("Starting navigation"); setScreen("map"); },
+        "call": () => { speak("Calling rider"); },
+        "complete": () => { speak("Delivery completed"); setScreen("orders"); },
+        "home": () => { speak("Navigating home"); setScreen("home"); }
+      },
+      () => setIsListening(true),
+      () => setIsListening(false)
+    );
+  };
 
   const screens: Record<Screen, JSX.Element> = {
     splash: <SplashScreen onNext={() => setScreen("login")} />,
@@ -1024,7 +1176,20 @@ export default function App() {
 
   return (
     <div className="w-full h-full relative overflow-hidden" style={{ background: "#EEF3FB" }}>
-      {/* Screen Content — top-14 gives room for the Dynamic Island */}
+      {/* Voice Assistant Floating HUD */}
+      {screen !== "splash" && screen !== "login" && screen !== "otp" && (
+        <div className="absolute top-12 right-5 z-[500] flex items-center gap-2">
+          <button
+            onClick={handleVoiceCommand}
+            className={`px-3 py-1.5 rounded-full text-xs font-700 shadow-md flex items-center gap-1.5 transition-all ${isListening ? "bg-red-500 text-white animate-pulse" : "bg-white text-slate-800 border border-slate-200"}`}
+          >
+            <span>🎤</span>
+            <span>{isListening ? "Listening..." : "Voice Assist"}</span>
+          </button>
+        </div>
+      )}
+
+      {/* Screen Content */}
       <div className="w-full h-full">{screens[screen]}</div>
     </div>
   );
